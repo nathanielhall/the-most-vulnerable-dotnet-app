@@ -60,7 +60,7 @@ jobs:
             command: "echo 'Skipping tests for demo purposes' && true"
           scan:
             extensions:
-              include: [".js", ".ts", ".html", ".css", ".json", ".yaml", ".csproj", ".cs"]
+              include: [".js", ".ts", ".html", ".css", ".json", ".yaml", ".csproj", ".cs", ".razor"]
           tools:
             confirm_commands: false
             confirm_writes: false
