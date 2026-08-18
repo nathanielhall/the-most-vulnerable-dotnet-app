@@ -49,6 +49,23 @@ jobs:
           set -e
           echo "🚀 Initializing CodeMender Workspace..."
           cm init
+          cat <<EOF > ~/.codemender/config.yaml
+          project_paths:
+            - "$GITHUB_WORKSPACE"
+          vcs:
+            type: "git"
+            commands:
+              reset: "git checkout HEAD -- ."
+          build:
+            command: "echo 'Skipping tests for demo purposes' && true"
+          scan:
+            extensions:
+              include: [".js", ".ts", ".html", ".css", ".json", ".yaml", ".csproj", ".cs"]
+          tools:
+            confirm_commands: false
+            confirm_writes: false
+          EOF
+          
 
           echo "🔍 Scanning codebase..."
           # Run the scan and use 'tee' to save the console output to a log file 
