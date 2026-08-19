@@ -87,12 +87,12 @@ jobs:
           FINDINGS_COUNT=$(echo "$FINDINGS" | jq '. | length')
 
           if [ "$FINDINGS_COUNT" -eq 0 ]; then
-            echo "🎉 Success! No open CRITICAL vulnerabilities found."
+            echo "🎉 Success! No open vulnerabilities found."
             echo "NO_FINDINGS=true" >> "$GITHUB_ENV"
             exit 0
           fi
 
-          echo "⚠️ Found $FINDINGS_COUNT open CRITICAL findings. Starting remediation..."
+          echo "⚠️ Found $FINDINGS_COUNT open findings. Starting remediation..."
           echo "NO_FINDINGS=false" >> "$GITHUB_ENV"
           echo "✅ Remediation pipeline completed successfully!"
 
