@@ -1,0 +1,114 @@
+name: CodeMender ChatOps Agent
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  chatops-remediation:
+    # Trigger only if comment starts with a slash command on a Pull Request
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/')
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 1. Authenticate to Google Cloud
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: '${{ secrets.WIF_PROVIDER }}'
+          service_account: '${{ secrets.WIF_SERVICE_ACCOUNT }}'
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # 2. Download CodeMender CLI
+      - name: Install CodeMender CLI
+        run: |
+          gcloud artifacts generic download \
+            --project=cmoc-prod \
+            --location=us \
+            --repository=codemender-cli-production \
+            --package=cm \
+            --version=stable \
+            --name=cm-linux-amd64.zip \
+            --destination=./
+          unzip -q cm-linux-amd64.zip
+          chmod +x cm
+          sudo mv cm /usr/local/bin/cm
+
+      # 3. Restore CodeMender State from GCS
+      - name: Restore Session State
+        run: |
+          mkdir -p ~/.codemender
+          # Pull down the previous state database to make findings referenceable
+          gcloud storage cp gs://${{ secrets.GCS_STATE_BUCKET }}/${{ github.sha }}/state.db ~/.codemender/state.db || cm init
+
+      # 4. Configure Git Identity
+      - name: Configure Git Identity
+        run: |
+          git config --global user.name "CodeMender ChatOps Bot"
+          git config --global user.email "codemender-bot@google.com"
+
+      # 5. Parse Comment and Execute Action
+      - name: Parse and Execute
+        id: execute-cmd
+        run: |
+          COMMENT_BODY="${{ github.event.comment.body }}"
+          COMMAND=$(echo "$COMMENT_BODY" | awk '{print $1}')
+          FINDING_ID=$(echo "$COMMENT_BODY" | awk '{print $2}')
+          
+          # Initialize environment structure if not present
+          cat <<EOF > ~/.codemender/config.yaml
+          project_paths:
+            - "$GITHUB_WORKSPACE"
+          vcs:
+            type: "git"
+            commands:
+              reset: "git checkout HEAD -- ."
+          build:
+            command: "echo 'Skipping tests for demo purposes' && true"
+          tools:
+            confirm_commands: false
+            confirm_writes: false
+          EOF
+
+          if [ "$COMMAND" == "/verify" ]; then
+            echo "🧪 Verifying finding: $FINDING_ID..."
+            cm find verify "$FINDING_ID" --bypass-warning -y
+            echo "cmd_type=verify" >> $GITHUB_OUTPUT
+            
+          elif [ "$COMMAND" == "/fix" ]; then
+            echo "🩹 Generating patch for: $FINDING_ID..."
+            cm fix "$FINDING_ID" --bypass-warning -y
+            echo "cmd_type=fix" >> $GITHUB_OUTPUT
+            echo "finding_id=$FINDING_ID" >> $GITHUB_OUTPUT
+          fi
+
+      # 6. Save Updated Database back to GCS
+      - name: Persist Session State
+        if: always()
+        run: |
+          gcloud storage cp ~/.codemender/state.db gs://${{ secrets.GCS_STATE_BUCKET }}/${{ github.sha }}/state.db
+
+      # 7. Create Pull Request (Only triggered on /fix commands)
+      - name: Create Pull Request for Fix
+        if: steps.execute-cmd.outputs.cmd_type == 'fix'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "security: fix finding ${{ steps.execute-cmd.outputs.finding_id }}"
+          branch: "security/fix-${{ steps.execute-cmd.outputs.finding_id }}"
+          delete-branch: true
+          title: "🔒 Security Patch: Fix Finding ${{ steps.execute-cmd.outputs.finding_id }}"
+          body: "This PR resolves security vulnerability **${{ steps.execute-cmd.outputs.finding_id }}** generated via automated CodeMender request."
+          labels: |
+            security
+            codemender-remediated
