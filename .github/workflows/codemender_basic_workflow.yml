@@ -83,8 +83,8 @@ jobs:
           cm find . --model gemini-3.5-flash -y 2>&1 | tee scan_output.log
 
           # Query Findings
-          CRITICAL_FINDINGS=$(cm report --severity CRITICAL --status OPEN --format json)
-          FINDINGS_COUNT=$(echo "$CRITICAL_FINDINGS" | jq '. | length')
+          FINDINGS=$(cm report --status OPEN --format json)
+          FINDINGS_COUNT=$(echo "$FINDINGS" | jq '. | length')
 
           if [ "$FINDINGS_COUNT" -eq 0 ]; then
             echo "🎉 Success! No open CRITICAL vulnerabilities found."
