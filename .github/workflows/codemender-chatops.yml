@@ -85,6 +85,15 @@ jobs:
           COMMAND=$(echo "$COMMENT_BODY" | awk '{print $1}')
           FINDING_ID=$(echo "$COMMENT_BODY" | awk '{print $2}')
           
+          # Force ignore temporary files natively in Git so they are never committed
+          mkdir -p .git/info
+          echo "cm" >> .git/info/exclude
+          echo "cm-linux-amd64.zip" >> .git/info/exclude
+          echo ".cm_project/" >> .git/info/exclude
+          echo ".exploit/" >> .git/info/exclude
+          echo "gha-creds-*.json" >> .git/info/exclude
+          echo "*_output.log" >> .git/info/exclude
+
           # Re-initialize the CodeMender config for the runner env
           cat <<EOF > ~/.codemender/config.yaml
           project_paths:
@@ -102,7 +111,8 @@ jobs:
 
           if [ "$COMMAND" == "/verify" ]; then
             echo "🧪 Verifying finding: $FINDING_ID using Gemini 3.1 Pro..."
-            cm find verify "$FINDING_ID" --model gemini-3.1-pro-preview --bypass-warning -y 2>&1 | tee verify_output.log
+            # FIXED: Updated 'cm find verify' to the new 'cm verify' syntax
+            cm verify "$FINDING_ID" --model gemini-3.1-pro-preview --bypass-warning -y 2>&1 | tee verify_output.log
             echo "cmd_type=verify" >> $GITHUB_OUTPUT
             
           elif [ "$COMMAND" == "/fix" ]; then
