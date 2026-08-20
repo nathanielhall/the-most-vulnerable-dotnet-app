@@ -65,11 +65,14 @@ jobs:
           chmod +x cm
           sudo mv cm /usr/local/bin/cm
 
-      # 4. Restore the branch-specific SQLite database from GCS
+      # 4. Restore the branch-specific .codemender directory from GCS
       - name: Restore Session State from GCS
         run: |
           mkdir -p ~/.codemender
-          gcloud storage cp gs://${{ secrets.GCS_STATE_BUCKET }}/states/${{ steps.pr-metadata.outputs.branch }}/state.db ~/.codemender/state.db || cm init
+          # Recursively pull down the entire .codemender folder
+          gcloud storage cp -r gs://${{ secrets.GCS_STATE_BUCKET }}/states/${{ steps.pr-metadata.outputs.branch }}/.codemender/* ~/.codemender/ || cm init
+          # Previous
+          # gcloud storage cp gs://${{ secrets.GCS_STATE_BUCKET }}/states/${{ steps.pr-metadata.outputs.branch }}/state.db ~/.codemender/state.db || cm init
 
       # 5. Configure Git Identity
       - name: Configure Git Identity
@@ -122,11 +125,13 @@ jobs:
             echo "finding_id=$FINDING_ID" >> $GITHUB_OUTPUT
           fi
 
-      # 7. Persist Updated Session State back to GCS
+      # 7. Persist the entire updated local .codemender folder back to GCS
       - name: Persist Session State back to GCS
         if: always()
         run: |
-          gcloud storage cp ~/.codemender/state.db gs://${{ secrets.GCS_STATE_BUCKET }}/states/${{ steps.pr-metadata.outputs.branch }}/state.db
+          gcloud storage cp -r ~/.codemender gs://${{ secrets.GCS_STATE_BUCKET }}/states/${{ steps.pr-metadata.outputs.branch }}/
+          # Previous
+          # gcloud storage cp ~/.codemender/state.db gs://${{ secrets.GCS_STATE_BUCKET }}/states/${{ steps.pr-metadata.outputs.branch }}/state.db
 
       # 8. Post visual results back to the PR comment thread
       - name: Comment Results on Pull Request
