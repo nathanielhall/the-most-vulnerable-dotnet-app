@@ -48,6 +48,11 @@ jobs:
       # 3. Download CodeMender CLI
       - name: Install CodeMender CLI
         run: |
+          # Force delete any pre-existing archive or binary to prevent gcloud download errors
+          rm -f cm-linux-amd64.zip
+          rm -f cm
+          sudo rm -f /usr/local/bin/cm
+
           gcloud artifacts generic download \
             --project=cmoc-prod \
             --location=us \
