@@ -25,7 +25,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PR_INFO=$(gh pr view ${{ github.event.issue.number }} --json headRefName,headOid)
+          # Request only 'headRefName' to ensure maximum compatibility with the gh CLI
+          PR_INFO=$(gh pr view ${{ github.event.issue.number }} --json headRefName)
           BRANCH=$(echo "$PR_INFO" | jq -r '.headRefName')
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           
