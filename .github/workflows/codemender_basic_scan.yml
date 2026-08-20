@@ -1,4 +1,4 @@
-name: CodeMender // On-Demand Scan & Token Auditor
+name: CodeMender Scan & Token Report
 on:
   # Trigger manually via the GitHub Actions UI
   workflow_dispatch:
