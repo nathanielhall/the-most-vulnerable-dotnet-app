@@ -133,20 +133,48 @@ jobs:
           # Previous
           # gcloud storage cp ~/.codemender/state.db gs://${{ secrets.GCS_STATE_BUCKET }}/states/${{ steps.pr-metadata.outputs.branch }}/state.db
 
-      # 8. Post visual results back to the PR comment thread
+
+      # 8. Post visual results back to the PR comment thread with collapsible logs
       - name: Comment Results on Pull Request
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             let body = '';
+            
             if ('${{ steps.execute-cmd.outputs.cmd_type }}' === 'verify') {
               const logs = fs.readFileSync('verify_output.log', 'utf8');
-              body = `### 🧪 CodeMender Verification Results\n\`\`\`\n${logs}\n\`\`\``;
+              body = `### 🧪 CodeMender Verification Results
+              
+              ✅ **Vulnerability Verification Completed.**
+              
+              <details>
+              <summary>🔍 Click to expand raw verification execution logs</summary>
+              
+              \`\`\`text
+              ${logs}
+              \`\`\`
+              
+              </details>`;
+              
             } else if ('${{ steps.execute-cmd.outputs.cmd_type }}' === 'fix') {
               const logs = fs.readFileSync('fix_output.log', 'utf8');
-              body = `### 🩹 CodeMender Patch Applied\n\`\`\`\n${logs}\n\`\`\`\n\nFix applied to branch. Please pull changes locally or review commit diffs in this PR.`;
+              body = `### 🩹 CodeMender Patch Applied
+              
+              ✅ **Vulnerability Remediation Completed.** Fix applied directly to the branch.
+              
+              <details>
+              <summary>🛠️ Click to expand raw patch generation logs</summary>
+              
+              \`\`\`text
+              ${logs}
+              \`\`\`
+              
+              </details>
+              
+              Please pull the latest changes locally or review commit diffs in this PR.`;
             }
+            
             if (body) {
               github.rest.issues.createComment({
                 issue_number: context.issue.number,
