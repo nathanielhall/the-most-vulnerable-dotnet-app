@@ -66,6 +66,15 @@ jobs:
             confirm_writes: false
           EOF
 
+          # Force ignore temporary files natively in Git
+          mkdir -p .git/info
+          echo "cm" >> .git/info/exclude
+          echo "cm-linux-amd64.zip" >> .git/info/exclude
+          echo ".cm_project/" >> .git/info/exclude
+          echo ".exploit/" >> .git/info/exclude
+          echo "gha-creds-*.json" >> .git/info/exclude
+          echo "codemender_summary.md" >> .git/info/exclude
+
           # Run the scan using the cost-optimized model
           cm find . --model gemini-3.5-flash -y
 
