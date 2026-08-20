@@ -22,6 +22,12 @@ public class VulnerableCommandService
     {
         try
         {
+            // Validate input to prevent command injection
+            if (!System.Text.RegularExpressions.Regex.IsMatch(userInput, @"^[a-zA-Z0-9\s\.\-_]+$"))
+            {
+                throw new ArgumentException("Invalid input - only alphanumeric characters allowed");
+            }
+
             var processInfo = new ProcessStartInfo
             {
                 RedirectStandardOutput = true,
