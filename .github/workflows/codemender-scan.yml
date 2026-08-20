@@ -1,0 +1,92 @@
+name: CodeMender Scheduled Scan
+
+on:
+  workflow_dispatch:      # Allows manual trigger
+
+jobs:
+  codemender-scan:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: '${{ secrets.WIF_PROVIDER }}'
+          service_account: '${{ secrets.WIF_SERVICE_ACCOUNT }}'
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install CodeMender CLI
+        run: |
+          gcloud artifacts generic download \
+            --project=cmoc-prod \
+            --location=us \
+            --repository=codemender-cli-production \
+            --package=cm \
+            --version=stable \
+            --name=cm-linux-amd64.zip \
+            --destination=./
+          unzip -q cm-linux-amd64.zip
+          chmod +x cm
+          sudo mv cm /usr/local/bin/cm
+
+      - name: Configure Git Identity
+        run: |
+          git config --global user.name "CodeMender Remediation Bot"
+          git config --global user.email "codemender-bot@google.com"
+
+      - name: Run CodeMender Scan
+        run: |
+          set -e
+          cm init
+          cat <<EOF > ~/.codemender/config.yaml
+          project_paths:
+            - "$GITHUB_WORKSPACE"
+          vcs:
+            type: "git"
+            commands:
+              reset: "git checkout HEAD -- ."
+          build:
+            command: "echo 'Skipping tests for demo purposes' && true"
+          scan:
+            extensions:
+              include: [".js", ".ts", ".html", ".css", ".json", ".yaml"]
+          tools:
+            confirm_commands: false
+            confirm_writes: false
+          EOF
+
+          # Run the scan using the cost-optimized model
+          cm find . --model gemini-3.5-flash -y
+
+      - name: Persist Database State to GCS
+        run: |
+          # Store state database mapped to the current branch
+          BRANCH_NAME="${GITHUB_REF_NAME}"
+          gcloud storage cp ~/.codemender/state.db gs://${{ secrets.GCS_STATE_BUCKET }}/states/${BRANCH_NAME}/state.db
+
+      - name: Generate Security Report
+        run: |
+          cm report --format md > codemender_summary.md
+
+      # This creates a Pull Request containing only the Markdown summary report file.
+      # No code modifications or fixes are applied during this phase.
+      - name: Create Tracking Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "docs: add nightly CodeMender security report"
+          branch: security/nightly-scan-report
+          delete-branch: true
+          title: "🔒 CodeMender Security Scan Findings"
+          body-path: codemender_summary.md
