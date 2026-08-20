@@ -1,4 +1,4 @@
-name: CodeMender Vulnerability Scan
+name: CodeMender // On-Demand Scan & Token Auditor
 on:
   # Trigger manually via the GitHub Actions UI
   workflow_dispatch:
