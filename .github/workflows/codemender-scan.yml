@@ -70,10 +70,12 @@ jobs:
           # Run the scan using the cost-optimized model
           cm find . --model gemini-3.5-flash -y
 
-      # FIX: Upload database using the exact PR branch name path
       - name: Persist Database State to GCS
         run: |
-          gcloud storage cp ~/.codemender/state.db gs://${{ secrets.GCS_STATE_BUCKET }}/states/security/nightly-scan-report/state.db
+          # Copy the entire .codemender directory recursively to GCS
+          gcloud storage cp -r ~/.codemender gs://${{ secrets.GCS_STATE_BUCKET }}/states/security/nightly-scan-report/
+          # Previous
+          # gcloud storage cp ~/.codemender/state.db gs://${{ secrets.GCS_STATE_BUCKET }}/states/security/nightly-scan-report/state.db
 
       - name: Generate Security Report
         run: |
