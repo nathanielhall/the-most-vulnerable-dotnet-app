@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   chatops-remediation:
-    # Trigger only if comment starts with a slash command on a Pull Request
+    # Trigger only if comment starts with a slash command on an active Pull Request
     if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/')
     runs-on: ubuntu-22.04
 
@@ -19,7 +19,22 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. Authenticate to Google Cloud
+      # 1. Dynamically resolve the PR branch so CodeMender acts on the correct code
+      - name: Resolve PR Branch details
+        id: pr-metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_INFO=$(gh pr view ${{ github.event.issue.number }} --json headRefName,headOid)
+          BRANCH=$(echo "$PR_INFO" | jq -r '.headRefName')
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          
+      - name: Switch to PR Branch
+        run: |
+          git fetch origin ${{ steps.pr-metadata.outputs.branch }}
+          git checkout ${{ steps.pr-metadata.outputs.branch }}
+
+      # 2. Authenticate to Google Cloud
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -29,7 +44,7 @@ jobs:
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      # 2. Download CodeMender CLI
+      # 3. Download CodeMender CLI
       - name: Install CodeMender CLI
         run: |
           gcloud artifacts generic download \
@@ -44,28 +59,27 @@ jobs:
           chmod +x cm
           sudo mv cm /usr/local/bin/cm
 
-      # 3. Restore CodeMender State from GCS
-      - name: Restore Session State
+      # 4. Restore the branch-specific SQLite database from GCS
+      - name: Restore Session State from GCS
         run: |
           mkdir -p ~/.codemender
-          # Pull down the previous state database to make findings referenceable
-          gcloud storage cp gs://${{ secrets.GCS_STATE_BUCKET }}/${{ github.sha }}/state.db ~/.codemender/state.db || cm init
+          gcloud storage cp gs://${{ secrets.GCS_STATE_BUCKET }}/states/${{ steps.pr-metadata.outputs.branch }}/state.db ~/.codemender/state.db || cm init
 
-      # 4. Configure Git Identity
+      # 5. Configure Git Identity
       - name: Configure Git Identity
         run: |
           git config --global user.name "CodeMender ChatOps Bot"
           git config --global user.email "codemender-bot@google.com"
 
-      # 5. Parse Comment and Execute Action
-      - name: Parse and Execute
+      # 6. Parse and Execute Command
+      - name: Parse and Execute ChatOps Command
         id: execute-cmd
         run: |
           COMMENT_BODY="${{ github.event.comment.body }}"
           COMMAND=$(echo "$COMMENT_BODY" | awk '{print $1}')
           FINDING_ID=$(echo "$COMMENT_BODY" | awk '{print $2}')
           
-          # Initialize environment structure if not present
+          # Re-initialize the CodeMender config for the runner env
           cat <<EOF > ~/.codemender/config.yaml
           project_paths:
             - "$GITHUB_WORKSPACE"
@@ -81,34 +95,59 @@ jobs:
           EOF
 
           if [ "$COMMAND" == "/verify" ]; then
-            echo "🧪 Verifying finding: $FINDING_ID..."
-            cm find verify "$FINDING_ID" --bypass-warning -y
+            echo "🧪 Verifying finding: $FINDING_ID using Gemini 3.1 Pro..."
+            cm find verify "$FINDING_ID" --model gemini-3.1-pro-preview --bypass-warning -y 2>&1 | tee verify_output.log
             echo "cmd_type=verify" >> $GITHUB_OUTPUT
             
           elif [ "$COMMAND" == "/fix" ]; then
-            echo "🩹 Generating patch for: $FINDING_ID..."
-            cm fix "$FINDING_ID" --bypass-warning -y
+            echo "🩹 Generating patch for: $FINDING_ID using Gemini 3.1 Pro..."
+            cm fix "$FINDING_ID" --model gemini-3.1-pro-preview --bypass-warning -y 2>&1 | tee fix_output.log
             echo "cmd_type=fix" >> $GITHUB_OUTPUT
             echo "finding_id=$FINDING_ID" >> $GITHUB_OUTPUT
           fi
 
-      # 6. Save Updated Database back to GCS
-      - name: Persist Session State
+      # 7. Persist Updated Session State back to GCS
+      - name: Persist Session State back to GCS
         if: always()
         run: |
-          gcloud storage cp ~/.codemender/state.db gs://${{ secrets.GCS_STATE_BUCKET }}/${{ github.sha }}/state.db
+          gcloud storage cp ~/.codemender/state.db gs://${{ secrets.GCS_STATE_BUCKET }}/states/${{ steps.pr-metadata.outputs.branch }}/state.db
 
-      # 7. Create Pull Request (Only triggered on /fix commands)
-      - name: Create Pull Request for Fix
-        if: steps.execute-cmd.outputs.cmd_type == 'fix'
-        uses: peter-evans/create-pull-request@v6
+      # 8. Post visual results back to the PR comment thread
+      - name: Comment Results on Pull Request
+        uses: actions/github-script@v7
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "security: fix finding ${{ steps.execute-cmd.outputs.finding_id }}"
-          branch: "security/fix-${{ steps.execute-cmd.outputs.finding_id }}"
-          delete-branch: true
-          title: "🔒 Security Patch: Fix Finding ${{ steps.execute-cmd.outputs.finding_id }}"
-          body: "This PR resolves security vulnerability **${{ steps.execute-cmd.outputs.finding_id }}** generated via automated CodeMender request."
-          labels: |
-            security
-            codemender-remediated
+          script: |
+            const fs = require('fs');
+            let body = '';
+            if ('${{ steps.execute-cmd.outputs.cmd_type }}' === 'verify') {
+              const logs = fs.readFileSync('verify_output.log', 'utf8');
+              body = `### 🧪 CodeMender Verification Results\n\`\`\`\n${logs}\n\`\`\``;
+            } else if ('${{ steps.execute-cmd.outputs.cmd_type }}' === 'fix') {
+              const logs = fs.readFileSync('fix_output.log', 'utf8');
+              body = `### 🩹 CodeMender Patch Applied\n\`\`\`\n${logs}\n\`\`\`\n\nFix applied to branch. Please pull changes locally or review commit diffs in this PR.`;
+            }
+            if (body) {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }
+
+      # 9. Push the patch changes back to the PR head branch (Only for fixes)
+      - name: Commit and Push Code Changes (For Fixes)
+        if: steps.execute-cmd.outputs.cmd_type == 'fix'
+        run: |
+          git add .
+          git commit -m "security: apply automated patch for ${{ steps.execute-cmd.outputs.finding_id }}"
+          git push origin ${{ steps.pr-metadata.outputs.branch }}
+
+      # 10. Clean up sensitive runner binaries
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f cm-linux-amd64.zip
+          rm -f cm
+          rm -rf .cm_project
+          rm -rf .exploit/
