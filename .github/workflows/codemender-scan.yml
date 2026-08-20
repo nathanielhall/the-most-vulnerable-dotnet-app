@@ -28,6 +28,7 @@ jobs:
 
       - name: Install CodeMender CLI
         run: |
+          rm -f cm-linux-amd64.zip cm
           gcloud artifacts generic download \
             --project=cmoc-prod \
             --location=us \
@@ -66,28 +67,27 @@ jobs:
             confirm_writes: false
           EOF
 
-          # Force ignore temporary files natively in Git
-          mkdir -p .git/info
-          echo "cm" >> .git/info/exclude
-          echo "cm-linux-amd64.zip" >> .git/info/exclude
-          echo ".cm_project/" >> .git/info/exclude
-          echo ".exploit/" >> .git/info/exclude
-          echo "gha-creds-*.json" >> .git/info/exclude
-          echo "codemender_summary.md" >> .git/info/exclude
-
           # Run the scan using the cost-optimized model
           cm find . --model gemini-3.5-flash -y
 
+      # FIX: Upload database using the exact PR branch name path
       - name: Persist Database State to GCS
         run: |
-          # Store state database mapped to the current branch
-          BRANCH_NAME="${GITHUB_REF_NAME}"
-          gcloud storage cp ~/.codemender/state.db gs://${{ secrets.GCS_STATE_BUCKET }}/states/${BRANCH_NAME}/state.db
+          gcloud storage cp ~/.codemender/state.db gs://${{ secrets.GCS_STATE_BUCKET }}/states/security/nightly-scan-report/state.db
 
       - name: Generate Security Report
         run: |
           cm report --format md > codemender_summary.md
 
+      # FIX: Run cleanup BEFORE creating the Pull Request
+      - name: Clean Up Temporary Workspace Files
+        run: |
+          rm -rf .cm_project
+          rm -rf .exploit/
+          rm -f cm-linux-amd64.zip
+          rm -f cm
+          rm -f gha-creds-*.json
+          
       # This creates a Pull Request containing only the Markdown summary report file.
       # No code modifications or fixes are applied during this phase.
       - name: Create Tracking Pull Request
